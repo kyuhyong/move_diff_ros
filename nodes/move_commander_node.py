@@ -12,8 +12,8 @@ from move_r1mini.srv import SetGoal, SetGoalResponse
 GOAL_DIST_tolerance = 0.05
 GOAL_ANGLE_tolerance = 0.05
 
-MAX_Vx = 0.2        #maximum m/s
-MAX_Vw = 0.3        #maximum rad/s
+MAX_Vx = 0.1        #maximum m/s
+MAX_Vw = 0.4        #maximum rad/s
 
 class OdomPose(object):
     x = 0.0
