@@ -1,8 +1,8 @@
-# move_r1mini for ROS-foxy
+# move_omorobot for ROS-foxy
 
 For **ROS-melodic** user, checkout to melodic branch.  
 
-**move_r1mini** is very simple position controller for R1mini mobile platform.
+**move_r1mini** is very simple position controller for OMOROBOT's mobile platform.
 
 This node will do followings
 
@@ -24,7 +24,7 @@ $ sudo apt install ros-<distro>-tf-transformations
 Clone this packae to /src under a ros2 workspace
 ```
 cd to ros2_ws/src
-git clone https://github.com/kyuhyong/move_r1mini.git
+git clone https://github.com/kyuhyong/move_omorobot.git
 cd ..
 colcon build --symlink-install
 ```
