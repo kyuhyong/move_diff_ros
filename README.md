@@ -1,6 +1,6 @@
 # move_omorobot
 
-move_r1mini is very simple position controller for R1mini mobile platform. 
+move_r1mini is very simple position controller for OMOROBOT's mobile robot platform. 
 
 This node will do followings
 - Open a service to receive a service call to "/set_goal"
@@ -13,7 +13,7 @@ This package is tested for R1mini platform and may also work for R1D2 as well.
 
 ```
 cd to catkin_ws/src
-git clone https://github.com/kyuhyong/move_r1mini.git -b melodic
+git clone https://github.com/kyuhyong/move_omorobot.git -b melodic
 cd ..
 catkin_make
 ```
