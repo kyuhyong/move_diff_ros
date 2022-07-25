@@ -1,4 +1,4 @@
-# move_r1mini 
+# move_omorobot
 
 move_r1mini is very simple position controller for R1mini mobile platform. 
 
