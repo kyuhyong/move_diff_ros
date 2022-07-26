@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 
+import cmd
 import sys
 import rospy
 import math
@@ -7,41 +8,84 @@ import math
 from nav_msgs.msg import Odometry
 from geometry_msgs.msg import Twist, Pose, Point, Vector3, Quaternion
 from tf.transformations import quaternion_from_euler, euler_from_quaternion
-from move_r1mini.srv import SetGoal, SetGoalResponse
+from move_omorobot.srv import SetGoal, SetGoalResponse
+from omo_r1_bringup.srv import *
 
-GOAL_DIST_tolerance = 0.05
-GOAL_ANGLE_tolerance = 0.05
+import actionlib
+from move_omorobot.msg import GoTargetOdomAction, GoTargetOdomFeedback, GoTargetOdomActionResult
 
-MAX_Vx = 0.1        #maximum m/s
-MAX_Vw = 0.4        #maximum rad/s
+GOAL_DIST_tolerance = 0.025
+GOAL_ANGLE_tolerance = 0.025
+
+MAX_Vx = 0.4        #maximum m/s
+MAX_Vw = 0.5        #maximum rad/s
+PID_Vw_Kp = 0.3     #P gain for aligning
+PID_Vw_Ki = 0.02     #I gain for aligning
+PID_Vx_Kp = 0.3     #P gain for linear V
+PID_Vx_Ki = 0.05     #P gain for linear V
 
 class OdomPose(object):
     x = 0.0
     y = 0.0
     theta = 0.0
 
-class MoveR1miniNode:
+class MoveCommanderNode:
     def __init__(self):
-        print("Hello MoveR1miniNode")
+        print("Hello Move_Commander_Node")
         #print(sys.version)
         rospy.Subscriber("/odom", Odometry, self.new_odom, queue_size=10)
         self.pub_cmdVel = rospy.Publisher("/cmd_vel", Twist, queue_size=10)
         rospy.Service('set_goal', SetGoal, self.service_setgoal)
         self.odom_new = OdomPose()
+        self.odom_old = OdomPose()
         self.odom_origin = OdomPose()
         self.odom_goal = OdomPose()
         self.new_goal_set = False
+        self.initial_angle_reached = False
         self.goal_reached = False
+        self.server = actionlib.SimpleActionServer('/go_target', GoTargetOdomAction, self.actionGoTarget, False)
+        self.server.start()
+        self.action_start = False
+        self.PID_turn_I = 0.0
+        self.PID_liear_I = 0.0
+        self.initial_goal_angle = 0.0
         rospy.Timer(rospy.Duration(0.1), self.timer_callback)
 
+    def actionGoTarget(self, goal):
+        self.set_new_goal(goal.x, goal.y, goal.theta)
+        self.action_start = True
+        #self.server.set_preempted()
+        rospy.loginfo('Action Set Goal: X= %.3f, Y=%.3f, Theta=%.3f',self.odom_goal.x, self.odom_goal.y, self.odom_goal.theta)
+
     def service_setgoal(self, req):
-        self.odom_goal.x = req.x
-        self.odom_goal.y = req.y
-        self.odom_goal.theta = req.theta
+        self.set_new_goal(req.x, req.y, req.theta)
+        #self.reset_odom(0.0, 0.0, 0.0)
+        rospy.loginfo('Service Set Goal: X= %.3f, Y=%.3f, Theta=%.3f',self.odom_goal.x, self.odom_goal.y, self.odom_goal.theta)
+        return SetGoalResponse()
+
+    def set_new_goal(self, x, y, theta):
+        self.odom_goal.x = x
+        self.odom_goal.y = y
+        self.odom_goal.theta = theta
+        # Compute initial goal angle (Pure pursuit)
+        d_x_g = self.odom_goal.x - self.odom_new.x
+        d_y_g = self.odom_goal.y - self.odom_new.y
+        self.initial_goal_angle = math.atan2(d_y_g, d_x_g)
         self.new_goal_set = True
         self.goal_reached = False
-        rospy.loginfo('Set Goal: X= %.3f, Y=%.3f, Theta=%.3f',self.odom_goal.x, self.odom_goal.y, self.odom_goal.theta)
-        return SetGoalResponse()
+        self.initial_angle_reached = False
+        self.PID_turn_I = 0.0
+        self.PID_liear_I = 0.0
+
+    def reset_odom(self, x,y,theta):
+        rospy.wait_for_service('reset_odom')
+        print("Service call reset_odom")
+        try:
+            resetOdom = rospy.ServiceProxy('reset_odom', ResetOdom)
+            response = resetOdom(0.0, 0.0, 0.0)
+            return response
+        except rospy.ServiceException as e:
+            print("Service call failed: %s"%e)
 
     def timer_callback(self, event):
         cmdVel = Twist()
@@ -59,27 +103,68 @@ class MoveR1miniNode:
                 if abs(d_angle) < GOAL_ANGLE_tolerance:
                     self.goal_reached = True
                     self.new_goal_set = False
+                    if self.action_start:
+                        result = GoTargetOdomActionResult()
+                        result.result = "Done"
+                        self.server.set_succeeded(result)
+                        self.action_start = False
                 else:
-                    if d_angle > 0.0:
-                        cmdVel.angular.z = MAX_Vw
-                    else:
-                        cmdVel.angular.z = -MAX_Vw
+                    vw = self.pid_turn(d_angle)
+                    cmdVel.angular.z = vw
             else:
                 ## goal not reached to target POSITION
-                
-                # angle between current position to goal position relative to X axis
-                goal_angle = math.atan2(d_y_g, d_x_g)
-                d_angle = goal_angle - self.odom_new.theta
-                print "Dist:{0:.3f} D_angle:{1:.3f}%".format(dist_goal, goal_angle)
-                if d_angle > 0.01:
-                    cmdVel.angular.z = MAX_Vw
-                elif d_angle < -0.01:
-                    cmdVel.angular.z = -MAX_Vw
-                if abs(d_angle) > 0.1:
-                    cmdVel.linear.x = 0.0
+                if not self.initial_angle_reached:
+                    # first align to the initial target angle
+                    theta_error = self.initial_goal_angle - self.odom_new.theta
+                    if abs(theta_error) > GOAL_ANGLE_tolerance:
+                        vw = self.pid_turn(theta_error)
+                        cmdVel.angular.z = vw
+                    else :
+                        self.initial_angle_reached = True
+                        self.PID_turn_I = 0.0
                 else:
-                    cmdVel.linear.x = MAX_Vx
+                    # angle between current position to goal position relative to X axis
+                    goal_angle = math.atan2(d_y_g, d_x_g)
+                    d_angle = goal_angle - self.odom_new.theta
+                    # For action server operation
+                    if self.action_start:
+                        self.send_feedback(dist_goal, d_angle)
+                        
+                    print "Dist:{0:.3f} D_angle:{1:.3f}%".format(dist_goal, goal_angle)
+                    vw = self.pid_turn(d_angle)
+                    cmdVel.angular.z = vw
+                    #if abs(d_angle) > 0.1:
+                    #    cmdVel.linear.x = 0.0
+                    #else:
+                    vx = self.pid_linear(dist_goal)
+                    cmdVel.linear.x = vx
         self.pub_cmdVel.publish(cmdVel)
+
+    def pid_turn(self, error):
+        out = error * PID_Vw_Kp + self.PID_turn_I * PID_Vw_Ki
+        self.PID_turn_I + error
+        if out > MAX_Vw:
+            out = MAX_Vw
+        elif out < -MAX_Vw:
+            out = -MAX_Vw
+        return out
+
+    def pid_linear(self, error):
+        out = error * PID_Vx_Kp + self.PID_liear_I * PID_Vx_Ki
+        self.PID_liear_I + error
+        if out > MAX_Vx:
+            out = MAX_Vx
+        elif out < -MAX_Vx:
+            out = -MAX_Vx
+        return out
+
+
+    def send_feedback(self, dist, theta):
+        self.server.is_active()
+        feedBack = GoTargetOdomFeedback()
+        feedBack.dist = dist_goal
+        feedBack.theta = d_angle
+        self.server.publish_feedback(feedBack)
 
     def new_odom(self, msg):
         self.odom_new.x = msg.pose.pose.position.x
@@ -97,5 +182,5 @@ class MoveR1miniNode:
 
 if __name__ == '__main__':
     rospy.init_node('move_r1mini_node')
-    node = MoveR1miniNode()
+    node = MoveCommanderNode()
     node.main()

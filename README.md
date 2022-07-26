@@ -20,6 +20,16 @@ catkin_make
 
 # Usage
 
+## Running move_commander_node
+
+Enter below command to run the node.
+
+```
+$ rosrun move_omorobot move_commander_node.py
+```
+
+## Service call
+
 Request a servcice call to set goal position and angle by entering below command
 - 'x', 'y' : Position relative to odom.position x, y
 - 'theta' : Target orientation yaw angle when reached to the target.

@@ -1,8 +1,8 @@
 <?xml version="1.0"?>
 <package format="2">
-  <name>move_r1mini</name>
+  <name>move_omorobot</name>
   <version>0.0.0</version>
-  <description>The move_r1mini package</description>
+  <description>The move_omorobot package</description>
   <maintainer email="kyu@todo.todo">kyu</maintainer>
   <license>TODO</license>
 
@@ -13,5 +13,8 @@
   <depend>nav_msgs</depend>
   <depend>geometry_msgs</depend>
   <depend>tf</depend>
+  <depend>actionlib</depend>
+  <depend>actionlib_msgs</depend>
+  <depend>omo_r1_bringup</depend>
   <exec_depend>message_runtime</exec_depend>
 </package>
