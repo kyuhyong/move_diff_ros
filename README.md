@@ -40,4 +40,5 @@ $ rosservice call /set_goal "{'x':1.0, 'y':1.0, 'theta':0.0}"
 
 # To do
 
-Add command to set maximum Vx, Vw
+- Gain tuning required
+- Error when moving along -x axis (when theta is near +pi or -pi)
