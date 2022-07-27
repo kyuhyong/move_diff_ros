@@ -17,11 +17,11 @@ from move_omorobot.msg import GoTargetOdomAction, GoTargetOdomFeedback, GoTarget
 GOAL_DIST_tolerance = 0.025
 GOAL_ANGLE_tolerance = 0.025
 
-MAX_Vx = 0.4        #maximum m/s
+MAX_Vx = 0.5        #maximum m/s
 MAX_Vw = 0.5        #maximum rad/s
-PID_Vw_Kp = 0.3     #P gain for aligning
-PID_Vw_Ki = 0.02     #I gain for aligning
-PID_Vx_Kp = 0.3     #P gain for linear V
+PID_Vw_Kp = 0.6     #P gain for aligning
+PID_Vw_Ki = 0.05     #I gain for aligning
+PID_Vx_Kp = 0.4     #P gain for linear V
 PID_Vx_Ki = 0.05     #P gain for linear V
 
 class OdomPose(object):
@@ -42,6 +42,7 @@ class MoveCommanderNode:
         self.odom_goal = OdomPose()
         self.new_goal_set = False
         self.initial_angle_reached = False
+        self.final_angle_reached = False
         self.goal_reached = False
         self.server = actionlib.SimpleActionServer('/go_target', GoTargetOdomAction, self.actionGoTarget, False)
         self.server.start()
@@ -49,6 +50,8 @@ class MoveCommanderNode:
         self.PID_turn_I = 0.0
         self.PID_liear_I = 0.0
         self.initial_goal_angle = 0.0
+        self.theta_slerp = 0
+        self.time_to_goal = 0.0
         rospy.Timer(rospy.Duration(0.1), self.timer_callback)
 
     def actionGoTarget(self, goal):
@@ -67,6 +70,7 @@ class MoveCommanderNode:
         self.odom_goal.x = x
         self.odom_goal.y = y
         self.odom_goal.theta = theta
+        self.time_to_goal = 0.0
         # Compute initial goal angle (Pure pursuit)
         d_x_g = self.odom_goal.x - self.odom_new.x
         d_y_g = self.odom_goal.y - self.odom_new.y
@@ -74,8 +78,9 @@ class MoveCommanderNode:
         self.new_goal_set = True
         self.goal_reached = False
         self.initial_angle_reached = False
+        self.final_angle_reached = False
         self.PID_turn_I = 0.0
-        self.PID_liear_I = 0.0
+        self.PID_linear_I = 0.0
 
     def reset_odom(self, x,y,theta):
         rospy.wait_for_service('reset_odom')
@@ -92,6 +97,7 @@ class MoveCommanderNode:
         cmdVel.linear.x = 0.0
         cmdVel.angular.z = 0.0
         if self.new_goal_set and not self.goal_reached:
+            self.time_to_goal+=0.1
             ## Compute delta x,y,angle to target
             d_x_g = self.odom_goal.x - self.odom_new.x
             d_y_g = self.odom_goal.y - self.odom_new.y
@@ -103,12 +109,16 @@ class MoveCommanderNode:
                 if abs(d_angle) < GOAL_ANGLE_tolerance:
                     self.goal_reached = True
                     self.new_goal_set = False
+                    print "Finished in {0:.1f} sec".format(self.time_to_goal)
                     if self.action_start:
                         result = GoTargetOdomActionResult()
                         result.result = "Done"
                         self.server.set_succeeded(result)
                         self.action_start = False
                 else:
+                    if not self.final_angle_reached:
+                        self.final_angle_reached = True
+                        self.PID_turn_I = 0.0       #Reset PID
                     vw = self.pid_turn(d_angle)
                     cmdVel.angular.z = vw
             else:
@@ -130,7 +140,7 @@ class MoveCommanderNode:
                     if self.action_start:
                         self.send_feedback(dist_goal, d_angle)
                         
-                    print "Dist:{0:.3f} D_angle:{1:.3f}%".format(dist_goal, goal_angle)
+                    print "Dist:{0:.3f} D_angle:{1:.3f}".format(dist_goal, d_angle)
                     vw = self.pid_turn(d_angle)
                     cmdVel.angular.z = vw
                     #if abs(d_angle) > 0.1:
@@ -150,20 +160,19 @@ class MoveCommanderNode:
         return out
 
     def pid_linear(self, error):
-        out = error * PID_Vx_Kp + self.PID_liear_I * PID_Vx_Ki
-        self.PID_liear_I + error
+        out = error * PID_Vx_Kp + self.PID_linear_I * PID_Vx_Ki
+        self.PID_linear_I + error
         if out > MAX_Vx:
             out = MAX_Vx
         elif out < -MAX_Vx:
             out = -MAX_Vx
         return out
 
-
     def send_feedback(self, dist, theta):
         self.server.is_active()
         feedBack = GoTargetOdomFeedback()
-        feedBack.dist = dist_goal
-        feedBack.theta = d_angle
+        feedBack.dist = dist
+        feedBack.theta = theta
         self.server.publish_feedback(feedBack)
 
     def new_odom(self, msg):
